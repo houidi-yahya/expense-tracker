@@ -1,0 +1,3 @@
+in step 1 i just created both tables users and expenses using the schema.sql file.
+and putted on delete cascade because i want to delete the parallele tabs if the one is deleted
+and than i used "GRANT" command to add access to the 'expence_user' so he can create delete insert etc

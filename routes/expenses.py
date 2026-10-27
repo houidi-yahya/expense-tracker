@@ -1,0 +1,69 @@
+from fastapi import APIRouter, HTTPException , Depends
+from database import get_db
+from models import ExpenseCreate, ExpenseBack , ExpensePatch
+from psycopg import Connection
+from routes.auth import get_current_user
+
+router = APIRouter(prefix="/expenses")
+
+@router.get("",response_model=list[ExpenseBack])
+def get_expenses(user_id: int = Depends(get_current_user),conn : Connection = Depends(get_db)):
+    rows=conn.execute(
+        "select *from expenses where user_id=%s;",
+        (user_id,)
+    ).fetchall()
+    return rows
+
+@router.post("/",response_model=ExpenseBack,status_code=201)
+def expense_create(expense:ExpenseCreate,user_id: int = Depends(get_current_user),conn : Connection = Depends(get_db)):
+    row=conn.execute(
+        "insert into expenses (object,price,category,user_id) values(%s,%s,%s,%s) returning *;",
+        (expense.object,expense.price,expense.category,user_id)
+    ).fetchone()
+    conn.commit()
+    return row
+
+@router.get("/{expense_id}",response_model=ExpenseBack)
+def get_expense_id(expense_id:int,user_id: int = Depends(get_current_user),conn : Connection = Depends(get_db)) : 
+    row=conn.execute(
+        "select * from expenses where (id=(%s) and user_id=%s); ",
+        (expense_id,user_id,)
+    ).fetchone()
+    if row is None:
+        raise HTTPException(status_code=404 ,detail="expense not found")
+    else :
+        return row
+
+@router.delete("/{expense_id}",status_code=204)
+def delete_note(expense_id:int,user_id: int = Depends(get_current_user),conn : Connection = Depends(get_db)):
+    row=conn.execute(
+        "delete from expenses where (id=(%s) and user_id=%s) returning id;",
+        (expense_id,user_id,)
+    ).fetchone()
+    conn.commit()
+    if row is None : 
+        raise HTTPException(status_code=404 , detail="expense not found")
+    return {"message" : "deleted"}
+
+@router.patch("/{expense_id}",response_model=ExpenseBack)
+def patch_note(expense:ExpensePatch,expense_id:int,user_id: int = Depends(get_current_user),conn : Connection = Depends(get_db)):
+    row=conn.execute(
+        "update expenses e set object=coalesce(%s,e.object), price=coalesce(%s,e.price),category=coalesce(%s,e.category) where (id=(%s) and user_id=%s) RETURNING*;",
+        (expense.object,expense.price,expense.category,expense_id,user_id,)
+    ).fetchone()
+    conn.commit()
+    if row is None:
+        raise HTTPException(status_code=404,detail="expense not found")
+    return row
+
+
+@router.put("/{expense_id}",response_model=ExpenseBack)
+def edit_note(expense:ExpenseCreate,expense_id:int,user_id: int = Depends(get_current_user),conn : Connection = Depends(get_db)):
+    row=conn.execute(
+        "update expenses set object=%s ,price=%s,category=%s where (id=(%s) and user_id=%s) RETURNING*;",
+        (expense.object,expense.price,expense.category,expense_id,user_id)
+    ).fetchone()
+    conn.commit()
+    if row is None:
+        raise HTTPException(status_code=404,detail="expense not found")
+    return row
