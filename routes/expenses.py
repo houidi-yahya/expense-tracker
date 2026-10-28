@@ -9,6 +9,24 @@ from psycopg import Connection, connection
 from routes.auth import get_current_user
 
 router = APIRouter(prefix="/expenses")
+async def get_rate(currency : str)->Decimal:
+    url= f"https://api.frankfurter.dev/v2/rate/USD/{currency}"
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            response = await client.get(url)
+        response.raise_for_status()
+    except httpx.TimeoutException:
+        raise HTTPException(status_code=504, detail="Currency API timed out")
+    except httpx.ConnectError:
+        raise HTTPException(status_code=502, detail="Cannot connect to currency API")
+    except httpx.HTTPStatusError as e:
+        if e.response.status_code==404:
+            raise HTTPException(status_code=404 , detail="invalid currency") from e
+        raise HTTPException(status_code=404 , detail="invalid currency") from e
+    data=response.json()
+    rate=data["rate"]
+    return rate
+ 
 
 @router.get("",response_model=list[ExpenseBack])
 def get_expenses(user_id: int = Depends(get_current_user),conn : Connection = Depends(get_db)):
@@ -35,22 +53,10 @@ async def total(currency : str, user_id : int = Depends(get_current_user),conn :
         "Select coalesce(sum(price),0) as total from expenses where user_id=%s;",
         (user_id,)
     ).fetchone()
-    url= f"https://api.frankfurter.dev/v2/rate/USD/{currency}"
-    try:
-        async with httpx.AsyncClient(timeout=10) as client:
-            response = await client.get(url)
-        response.raise_for_status()
-    except httpx.TimeoutException:
-        raise HTTPException(status_code=504, detail="Currency API timed out")
-    except httpx.ConnectError:
-        raise HTTPException(status_code=502, detail="Cannot connect to currency API")
-    except httpx.HTTPStatusError as e:
-        if e.response.status_code==404:
-            raise HTTPException(status_code=404 , detail="invalid currency") from e
-        raise HTTPException(status_code=404 , detail="invalid currency") from e
-    data=response.json()
-    rate=data["rate"]
+    rate=await get_rate(currency)
     tot=row["total"]*Decimal(str(rate))
+
+
     return  {"total" : f"{tot:.2f}", "currency" : currency} 
 
 @router.get("/summary")
@@ -65,20 +71,9 @@ async def summary(currency : str, user_id : int = Depends(get_current_user),conn
         (user_id,)
     ).fetchall()
     url= f"https://api.frankfurter.dev/v2/rate/USD/{currency}"
-    try:
-        async with httpx.AsyncClient(timeout=10) as client:
-            response = await client.get(url)
-        response.raise_for_status()
-    except httpx.Timeout:
-        raise HTTPException(status_code=504, detail="Currency API timed out")
-    except httpx.ConnectionError:
-        raise HTTPException(status_code=502, detail="Cannot connect to currency API")
-    except httpx.HTTPError as e:
-        if e.response.status_code==404:
-            raise HTTPException(status_code=404 , detail="invalid currency") from e
-        raise HTTPException(status_code=404 , detail="invalid currency") from e
-    data=response.json()
-    rate = Decimal(str(data["rate"]))
+
+    rate= await get_rate(currency)
+    rate = Decimal(str(rate))
     for r in row:
         r["total"] = (r["total"] * rate).quantize(Decimal("0.01"))
 
