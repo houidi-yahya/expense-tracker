@@ -52,6 +52,40 @@ def total(currency : str, user_id : int = Depends(get_current_user),conn : Conne
     tot=row["total"]*Decimal(str(rate))
     return  {"total" : f"{tot:.2f}", "currency" : currency} 
 
+@router.get("/summary")
+def summary(currency : str, user_id : int = Depends(get_current_user),conn : Connection = Depends(get_db)):
+    currency=currency.upper()
+    row=conn.execute(
+        "Select category,coalesce(sum(price),0) as total from expenses where user_id=%s group by category;",
+        (user_id,)
+    ).fetchall()
+    row1=conn.execute(
+        "Select extract(month from created_at) as month ,extract(year from created_at) as year ,coalesce(sum(price),0) as total from expenses where user_id=%s group by extract(month from created_at),extract(year from created_at) ;",
+        (user_id,)
+    ).fetchall()
+    url= f"https://api.frankfurter.dev/v2/rate/USD/{currency}"
+    try:
+        response = requests.get(url,timeout=10)
+        response.raise_for_status()
+    except requests.Timeout:
+        raise HTTPException(status_code=504, detail="Currency API timed out")
+    except requests.ConnectionError:
+        raise HTTPException(status_code=502, detail="Cannot connect to currency API")
+    except requests.HTTPError as e:
+        if e.response.status_code==404:
+            raise HTTPException(status_code=404 , detail="invalid currency") from e
+        raise HTTPException(status_code=404 , detail="invalid currency") from e
+    data=response.json()
+    rate = Decimal(str(data["rate"]))
+    for r in row:
+        r["total"] = (r["total"] * rate).quantize(Decimal("0.01"))
+
+    for r in row1:
+        r["total"] = (r["total"] * rate).quantize(Decimal("0.01"))
+    return {"by_month" : row1,"by_category" : row}
+    
+
+   
 
 @router.get("/{expense_id}",response_model=ExpenseBack)
 def get_expense_id(expense_id:int,user_id: int = Depends(get_current_user),conn : Connection = Depends(get_db)) : 
