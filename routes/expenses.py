@@ -1,7 +1,11 @@
+from decimal import Decimal
+
 from fastapi import APIRouter, HTTPException , Depends
+from pydantic import HttpUrl
+import requests
 from database import get_db
 from models import ExpenseCreate, ExpenseBack , ExpensePatch
-from psycopg import Connection
+from psycopg import Connection, connection
 from routes.auth import get_current_user
 
 router = APIRouter(prefix="/expenses")
@@ -22,6 +26,32 @@ def expense_create(expense:ExpenseCreate,user_id: int = Depends(get_current_user
     ).fetchone()
     conn.commit()
     return row
+
+
+@router.get("/total")
+def total(currency : str, user_id : int = Depends(get_current_user),conn : Connection = Depends(get_db)):
+    currency=currency.upper()
+    row=conn.execute(
+        "Select coalesce(sum(price),0) as total from expenses where user_id=%s;",
+        (user_id,)
+    ).fetchone()
+    url= f"https://api.frankfurter.dev/v2/rate/USD/{currency}"
+    try:
+        response = requests.get(url,timeout=10)
+        response.raise_for_status()
+    except requests.Timeout:
+        raise HTTPException(status_code=504, detail="Currency API timed out")
+    except requests.ConnectionError:
+        raise HTTPException(status_code=502, detail="Cannot connect to currency API")
+    except requests.HTTPError as e:
+        if e.response.status_code==404:
+            raise HTTPException(status_code=404 , detail="invalid currency") from e
+        raise HTTPException(status_code=404 , detail="invalid currency") from e
+    data=response.json()
+    rate=data["rate"]
+    tot=row["total"]*Decimal(str(rate))
+    return  {"total" : f"{tot:.2f}", "currency" : currency} 
+
 
 @router.get("/{expense_id}",response_model=ExpenseBack)
 def get_expense_id(expense_id:int,user_id: int = Depends(get_current_user),conn : Connection = Depends(get_db)) : 
@@ -67,3 +97,5 @@ def edit_note(expense:ExpenseCreate,expense_id:int,user_id: int = Depends(get_cu
     if row is None:
         raise HTTPException(status_code=404,detail="expense not found")
     return row
+
+
