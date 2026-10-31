@@ -53,7 +53,7 @@ def login(user_info:connect_user,conn : Connection = Depends(get_db)):
     )
     return {
             "access_token" : access_token,
-            "token_type" : "Bearer"
+            "token_type" : "bearer"
     }
 
 @router.post("/register",status_code=201)
